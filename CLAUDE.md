@@ -8,12 +8,27 @@ mbpcap is a Go serial capture tool that frames data from a serial port into pack
 
 ## Build & Development Commands
 
+This project uses [Task](https://taskfile.dev) as its build tool. See `Taskfile.yml` for details.
+
 ```bash
-go build ./...          # Build all packages
-go test ./...           # Run all tests
+task build              # Build for current platform
+task test               # Run all tests
+task vet                # Static analysis
+task fmt                # Format code with gofmt
+task lint               # Run golangci-lint
+task dev                # Quick cycle: fmt, vet, build, test
+task ci                 # Full CI: fmt, vet, test, build-all
+task build-all          # Cross-compile for linux/darwin/windows
+task clean              # Remove build artifacts
+task install            # Install binary to GOPATH/bin
+task run -- <args>      # Run with arguments
+```
+
+Direct go commands also work:
+
+```bash
 go test ./pkg/pcap      # Run tests for a specific package
 go test -run TestName   # Run a single test
-go vet ./...            # Static analysis
 ```
 
 ## Architecture
