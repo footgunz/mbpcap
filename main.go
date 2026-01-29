@@ -14,6 +14,8 @@ import (
 	"mbpcap/pkg/pcap"
 )
 
+var Version = "dev"
+
 type readResult struct {
 	data []byte
 	ts   time.Time

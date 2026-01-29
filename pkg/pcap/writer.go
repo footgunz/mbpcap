@@ -7,11 +7,11 @@ import (
 )
 
 const (
-	magicNumber uint32 = 0xa1b2c3d4
+	magicNumber  uint32 = 0xa1b2c3d4
 	versionMajor uint16 = 2
 	versionMinor uint16 = 4
-	snapLen     uint32 = 65535
-	dltUser0    uint32 = 147
+	snapLen      uint32 = 65535
+	dltUser0     uint32 = 147
 )
 
 // Writer writes packets in libpcap format.

@@ -1,0 +1,101 @@
+version: '3'
+
+vars:
+  BINARY_NAME: mbpcap
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+  LDFLAGS: -ldflags "-X main.Version={{.VERSION}}"
+  DIST_DIR: dist
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build for current platform
+    cmds:
+      - go build {{.LDFLAGS}} -o {{.BINARY_NAME}} .
+    sources:
+      - "*.go"
+      - pkg/**/*.go
+    generates:
+      - "{{.BINARY_NAME}}"
+
+  build-all:
+    desc: Build for all platforms (Linux, macOS, Windows)
+    deps: [clean]
+    cmds:
+      - mkdir -p {{.DIST_DIR}}
+      - task: build-platform
+        vars: {GOOS: linux, GOARCH: amd64}
+      - task: build-platform
+        vars: {GOOS: linux, GOARCH: arm64}
+      - task: build-platform
+        vars: {GOOS: darwin, GOARCH: amd64}
+      - task: build-platform
+        vars: {GOOS: darwin, GOARCH: arm64}
+      - task: build-platform
+        vars: {GOOS: windows, GOARCH: amd64, EXT: .exe}
+
+  build-platform:
+    internal: true
+    vars:
+      OUTPUT: "{{.DIST_DIR}}/{{.BINARY_NAME}}-{{.GOOS}}-{{.GOARCH}}{{.EXT}}"
+    cmds:
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build {{.LDFLAGS}} -o {{.OUTPUT}} .
+    silent: false
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: Format code with gofmt
+    cmds:
+      - go fmt ./...
+
+  lint:
+    desc: Run golangci-lint (requires golangci-lint installed)
+    cmds:
+      - golangci-lint run
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf {{.DIST_DIR}}
+      - rm -f {{.BINARY_NAME}}
+
+  install:
+    desc: Install binary to GOPATH/bin
+    deps: [build]
+    cmds:
+      - go install .
+
+  run:
+    desc: "Run the CLI with arguments (usage: task run -- --help)"
+    cmds:
+      - go run . {{.CLI_ARGS}}
+
+  dev:
+    desc: Quick development cycle (fmt, vet, build, test)
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: build
+      - task: test
+
+  ci:
+    desc: Run CI checks (fmt, vet, test, build-all)
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: test
+      - task: build-all
