@@ -42,7 +42,7 @@ tasks:
   build-platform:
     internal: true
     vars:
-      OUTPUT: "{{.DIST_DIR}}/{{.BINARY_NAME}}-{{.GOOS}}-{{.GOARCH}}{{.EXT}}"
+      OUTPUT: "{{.DIST_DIR}}/{{.BINARY_NAME}}-{{.VERSION}}-{{.GOOS}}-{{.GOARCH}}{{.EXT}}"
     cmds:
       - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build {{.LDFLAGS}} -o {{.OUTPUT}} .
     silent: false

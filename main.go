@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -89,6 +90,7 @@ func main() {
 	bigEndian := flag.Bool("bigendian", false, "write PCAP in big-endian byte order")
 	modbusMode := flag.Bool("modbus", false, "enable Modbus RTU frame splitting")
 	verbose := flag.Bool("v", false, "verbose: show live capture status on stderr")
+	pipeMode := flag.Bool("pipe", false, "create a named pipe (FIFO) for live Wireshark streaming (Unix only)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mbpcap [flags] <serial-port>\n\nFlags:\n")
@@ -128,10 +130,19 @@ func main() {
 		log.Fatalf("open serial port: %v", err)
 	}
 
-	f, err := os.Create(*output)
-	if err != nil {
-		_ = port.Close()
-		log.Fatalf("create output file: %v", err)
+	var f *os.File
+	if *pipeMode {
+		f, err = createPipe(*output)
+		if err != nil {
+			_ = port.Close()
+			log.Fatalf("create pipe: %v", err)
+		}
+	} else {
+		f, err = os.Create(*output)
+		if err != nil {
+			_ = port.Close()
+			log.Fatalf("create output file: %v", err)
+		}
 	}
 
 	var byteOrder binary.ByteOrder = binary.LittleEndian
@@ -148,10 +159,16 @@ func main() {
 	if err != nil {
 		_ = f.Close()
 		_ = port.Close()
+		if *pipeMode {
+			removePipe(*output)
+		}
 		log.Fatalf("write pcap header: %v", err)
 	}
 	defer func() { _ = f.Close() }()
 	defer func() { _ = port.Close() }()
+	if *pipeMode {
+		defer removePipe(*output)
+	}
 
 	var silenceThreshold time.Duration
 	if *silenceUs > 0 {
@@ -186,6 +203,7 @@ func main() {
 
 	var packetBuf []byte
 	var firstByteTime time.Time
+	var pipeBroken bool
 	silenceTimer := time.NewTimer(0)
 	if !silenceTimer.Stop() {
 		<-silenceTimer.C
@@ -260,6 +278,10 @@ func main() {
 					}
 					payload := append(rtacHeader(ts, byte(frame.Dir)), frame.Data...)
 					if err := pw.WritePacket(ts, payload); err != nil {
+						if errors.Is(err, syscall.EPIPE) {
+							pipeBroken = true
+							return
+						}
 						log.Printf("write packet: %v", err)
 					}
 					packetCount++
@@ -284,6 +306,10 @@ func main() {
 				}
 				payload := append(rtacHeader(fallbackTime, byte(decoder.DirUnknown)), fallback...)
 				if err := pw.WritePacket(fallbackTime, payload); err != nil {
+					if errors.Is(err, syscall.EPIPE) {
+						pipeBroken = true
+						return
+					}
 					log.Printf("write packet: %v", err)
 				}
 				packetCount++
@@ -291,6 +317,11 @@ func main() {
 			}
 		} else {
 			if err := pw.WritePacket(firstByteTime, packetBuf); err != nil {
+				if errors.Is(err, syscall.EPIPE) {
+					pipeBroken = true
+					packetBuf = nil
+					return
+				}
 				log.Printf("write packet: %v", err)
 			}
 			packetCount++
@@ -316,6 +347,11 @@ func main() {
 
 		case <-silenceTimer.C:
 			flush()
+			if pipeBroken {
+				log.Printf("pipe closed by reader")
+				log.Printf("captured %d packets", packetCount)
+				return
+			}
 			if *verbose && time.Since(lastStatus) >= time.Second {
 				if *modbusMode {
 					fmt.Fprintf(os.Stderr, "\rpackets: %d (TX: %d  RX: %d  ?: %d)          ", packetCount, txCount, rxCount, unknownCount)
