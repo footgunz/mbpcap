@@ -85,17 +85,19 @@ tasks:
       - go run . {{.CLI_ARGS}}
 
   dev:
-    desc: Quick development cycle (fmt, vet, build, test)
+    desc: Quick development cycle (fmt, vet, lint, build, test)
     cmds:
       - task: fmt
       - task: vet
+      - task: lint
       - task: build
       - task: test
 
   ci:
-    desc: Run CI checks (fmt, vet, test, build-all)
+    desc: Run CI checks (fmt, vet, lint, test, build-all)
     cmds:
       - task: fmt
       - task: vet
+      - task: lint
       - task: test
       - task: build-all

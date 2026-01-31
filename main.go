@@ -88,6 +88,7 @@ func main() {
 	silenceUs := flag.Float64("silence", 0, "silence threshold in microseconds (0 = auto: 3.5 character times)")
 	bigEndian := flag.Bool("bigendian", false, "write PCAP in big-endian byte order")
 	modbusMode := flag.Bool("modbus", false, "enable Modbus RTU frame splitting")
+	verbose := flag.Bool("v", false, "verbose: show live capture status on stderr")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mbpcap [flags] <serial-port>\n\nFlags:\n")
@@ -126,13 +127,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("open serial port: %v", err)
 	}
-	defer port.Close()
 
 	f, err := os.Create(*output)
 	if err != nil {
+		_ = port.Close()
 		log.Fatalf("create output file: %v", err)
 	}
-	defer f.Close()
 
 	var byteOrder binary.ByteOrder = binary.LittleEndian
 	if *bigEndian {
@@ -146,8 +146,12 @@ func main() {
 
 	pw, err := pcap.NewWriter(f, byteOrder, dlt)
 	if err != nil {
+		_ = f.Close()
+		_ = port.Close()
 		log.Fatalf("write pcap header: %v", err)
 	}
+	defer func() { _ = f.Close() }()
+	defer func() { _ = port.Close() }()
 
 	var silenceThreshold time.Duration
 	if *silenceUs > 0 {
@@ -188,6 +192,10 @@ func main() {
 	}
 
 	packetCount := 0
+	txCount := 0
+	rxCount := 0
+	unknownCount := 0
+	var lastStatus time.Time
 
 	flush := func() {
 		if len(packetBuf) == 0 {
@@ -199,7 +207,7 @@ func main() {
 				ts := firstByteTime
 				if i > 0 {
 					bytesSoFar := 0
-					for j := 0; j < i; j++ {
+					for j := range i {
 						bytesSoFar += len(classified[j].Data)
 					}
 					wireTime := time.Duration(float64(bytesSoFar*charBits(*databits, *stopbitsInt, *parityStr)) / float64(*baud) * float64(time.Second))
@@ -210,6 +218,14 @@ func main() {
 					log.Printf("write packet: %v", err)
 				}
 				packetCount++
+				switch frame.Dir {
+				case decoder.DirRequest:
+					txCount++
+				case decoder.DirResponse:
+					rxCount++
+				case decoder.DirUnknown:
+					unknownCount++
+				}
 			}
 		} else {
 			if err := pw.WritePacket(firstByteTime, packetBuf); err != nil {
@@ -238,14 +254,28 @@ func main() {
 
 		case <-silenceTimer.C:
 			flush()
+			if *verbose && time.Since(lastStatus) >= time.Second {
+				if *modbusMode {
+					fmt.Fprintf(os.Stderr, "\rpackets: %d (TX: %d  RX: %d  ?: %d)          ", packetCount, txCount, rxCount, unknownCount)
+				} else {
+					fmt.Fprintf(os.Stderr, "\rpackets: %d          ", packetCount)
+				}
+				lastStatus = time.Now()
+			}
 
 		case <-sigChan:
 			flush()
+			if *verbose {
+				fmt.Fprintln(os.Stderr)
+			}
 			log.Printf("captured %d packets", packetCount)
 			return
 
 		case err := <-errChan:
 			flush()
+			if *verbose {
+				fmt.Fprintln(os.Stderr)
+			}
 			log.Printf("serial read error: %v", err)
 			log.Printf("captured %d packets", packetCount)
 			return

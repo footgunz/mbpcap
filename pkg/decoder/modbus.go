@@ -75,7 +75,7 @@ func FrameLen(data []byte) int {
 
 // ValidCRC checks the Modbus CRC-16 of a frame.
 // Stub: always returns true. Real CRC-16 (poly 0xA001, init 0xFFFF) to be added later.
-func ValidCRC(data []byte) bool {
+func ValidCRC(_ []byte) bool {
 	return true
 }
 

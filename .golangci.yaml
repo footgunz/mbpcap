@@ -1,0 +1,67 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - copyloopvar
+    - durationcheck
+    - errcheck
+    - errorlint
+    - exhaustive
+    - gocritic
+    - goprintffuncname
+    - gosec
+    - govet
+    - ineffassign
+    - intrange
+    - lll
+    - misspell
+    - nakedret
+    - nolintlint
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+  settings:
+    gocritic:
+      disabled-checks:
+        - wrapperFunc
+    gosec:
+      excludes:
+        - G115 # integer overflow on uint32 casts — expected in PCAP header fields
+    lll:
+      line-length: 250
+    misspell:
+      locale: US
+    nolintlint:
+      require-explanation: true
+      require-specific: false
+      allow-unused: false
+    whitespace:
+      multi-if: true
+      multi-func: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - gosec
+          - lll
+          - unparam
+        path: _test\.go
+      - linters:
+          - funlen
+        path: main.go
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
