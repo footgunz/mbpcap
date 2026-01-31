@@ -94,6 +94,49 @@ func SplitFrames(data []byte) []Frame {
 	return result
 }
 
+// SplitFramesPartial greedily parses as many complete Modbus RTU frames as
+// possible from the front of data and returns them along with any unparsed
+// remainder bytes. If all bytes are consumed, remainder is nil. The returned
+// remainder is a newly allocated copy, not a sub-slice of data.
+func SplitFramesPartial(data []byte) ([]Frame, []byte) {
+	// Fast path: try exact parse (all bytes consumed)
+	if result := splitFrom(data, 0, nil); result != nil {
+		return result, nil
+	}
+
+	// Greedy: consume frames from the front, stop when nothing fits
+	var frames []Frame
+	pos := 0
+	for pos < len(data) {
+		candidates := frameCandidates(data[pos:])
+		if len(candidates) == 0 {
+			break
+		}
+		found := false
+		for _, c := range candidates {
+			if pos+c.length <= len(data) && ValidCRC(data[pos:pos+c.length]) {
+				frames = append(frames, Frame{
+					Data: data[pos : pos+c.length],
+					Dir:  c.dir,
+				})
+				pos += c.length
+				found = true
+				break
+			}
+		}
+		if !found {
+			break
+		}
+	}
+
+	var remainder []byte
+	if pos < len(data) {
+		remainder = make([]byte, len(data)-pos)
+		copy(remainder, data[pos:])
+	}
+	return frames, remainder
+}
+
 // splitFrom recursively tries to split data[pos:] into frames. Returns nil if
 // no clean split is possible.
 func splitFrom(data []byte, pos int, acc []Frame) []Frame {

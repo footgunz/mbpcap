@@ -195,6 +195,8 @@ func main() {
 	txCount := 0
 	rxCount := 0
 	unknownCount := 0
+	var prevExtra []byte
+	var prevExtraTime time.Time
 	var lastStatus time.Time
 
 	flush := func() {
@@ -202,30 +204,90 @@ func main() {
 			return
 		}
 		if *modbusMode {
-			classified := decoder.SplitFrames(packetBuf)
-			for i, frame := range classified {
-				ts := firstByteTime
-				if i > 0 {
-					bytesSoFar := 0
-					for j := range i {
-						bytesSoFar += len(classified[j].Data)
-					}
-					wireTime := time.Duration(float64(bytesSoFar*charBits(*databits, *stopbitsInt, *parityStr)) / float64(*baud) * float64(time.Second))
-					ts = firstByteTime.Add(wireTime)
+			extra := prevExtra
+			extraTime := prevExtraTime
+			prevExtra = nil
+			prevExtraTime = time.Time{}
+
+			// Expire stale remainder: if the gap between the previous
+			// remainder and this buffer exceeds the silence threshold,
+			// the remainder is too old to belong to the current frame.
+			if extra != nil && firstByteTime.Sub(extraTime) > silenceThreshold {
+				if *verbose {
+					log.Printf("expiring %d-byte remainder (age %s > silence %s)",
+						len(extra), firstByteTime.Sub(extraTime), silenceThreshold)
 				}
-				payload := append(rtacHeader(ts, byte(frame.Dir)), frame.Data...)
-				if err := pw.WritePacket(ts, payload); err != nil {
+				extra = nil
+			}
+
+			baseTime := firstByteTime
+			bitsPerChar := charBits(*databits, *stopbitsInt, *parityStr)
+
+			// Try parsing the new buffer on its own first
+			frames, remainder := decoder.SplitFramesPartial(packetBuf)
+
+			if len(frames) == 0 && extra != nil {
+				// New buffer didn't parse alone; try with previous remainder prepended
+				combined := make([]byte, 0, len(extra)+len(packetBuf))
+				combined = append(combined, extra...)
+				combined = append(combined, packetBuf...)
+				frames, remainder = decoder.SplitFramesPartial(combined)
+				baseTime = extraTime
+			} else if extra != nil && *verbose {
+				log.Printf("discarding %d-byte remainder from previous cycle", len(extra))
+			}
+
+			if len(frames) > 0 {
+				prevExtra = remainder
+				if remainder != nil {
+					parsedBytes := 0
+					for _, f := range frames {
+						parsedBytes += len(f.Data)
+					}
+					prevExtraTime = baseTime.Add(
+						time.Duration(float64(parsedBytes*bitsPerChar) / float64(*baud) * float64(time.Second)),
+					)
+				}
+				for i, frame := range frames {
+					ts := baseTime
+					if i > 0 {
+						bytesSoFar := 0
+						for j := range i {
+							bytesSoFar += len(frames[j].Data)
+						}
+						wireTime := time.Duration(float64(bytesSoFar*bitsPerChar) / float64(*baud) * float64(time.Second))
+						ts = baseTime.Add(wireTime)
+					}
+					payload := append(rtacHeader(ts, byte(frame.Dir)), frame.Data...)
+					if err := pw.WritePacket(ts, payload); err != nil {
+						log.Printf("write packet: %v", err)
+					}
+					packetCount++
+					switch frame.Dir {
+					case decoder.DirRequest:
+						txCount++
+					case decoder.DirResponse:
+						rxCount++
+					case decoder.DirUnknown:
+						unknownCount++
+					}
+				}
+			} else {
+				// Nothing parsed — write as DirUnknown, including any stale remainder
+				fallback := packetBuf
+				fallbackTime := firstByteTime
+				if extra != nil {
+					fallback = make([]byte, 0, len(extra)+len(packetBuf))
+					fallback = append(fallback, extra...)
+					fallback = append(fallback, packetBuf...)
+					fallbackTime = extraTime
+				}
+				payload := append(rtacHeader(fallbackTime, byte(decoder.DirUnknown)), fallback...)
+				if err := pw.WritePacket(fallbackTime, payload); err != nil {
 					log.Printf("write packet: %v", err)
 				}
 				packetCount++
-				switch frame.Dir {
-				case decoder.DirRequest:
-					txCount++
-				case decoder.DirResponse:
-					rxCount++
-				case decoder.DirUnknown:
-					unknownCount++
-				}
+				unknownCount++
 			}
 		} else {
 			if err := pw.WritePacket(firstByteTime, packetBuf); err != nil {

@@ -132,6 +132,122 @@ func TestSplitFramesUnsplittable(t *testing.T) {
 	}
 }
 
+func TestSplitFramesPartialExact(t *testing.T) {
+	// Full request + full response → 2 frames, nil remainder
+	merged := make([]byte, 0, len(reqFrame)+len(respFrame))
+	merged = append(merged, reqFrame...)
+	merged = append(merged, respFrame...)
+
+	frames, remainder := SplitFramesPartial(merged)
+	if len(frames) != 2 {
+		t.Fatalf("got %d frames, want 2", len(frames))
+	}
+	if !bytes.Equal(frames[0].Data, reqFrame) {
+		t.Errorf("frame[0] = %x, want %x", frames[0].Data, reqFrame)
+	}
+	if frames[0].Dir != DirRequest {
+		t.Errorf("frame[0].Dir = %d, want DirRequest", frames[0].Dir)
+	}
+	if !bytes.Equal(frames[1].Data, respFrame) {
+		t.Errorf("frame[1] = %x, want %x", frames[1].Data, respFrame)
+	}
+	if frames[1].Dir != DirResponse {
+		t.Errorf("frame[1].Dir = %d, want DirResponse", frames[1].Dir)
+	}
+	if remainder != nil {
+		t.Errorf("remainder = %x, want nil", remainder)
+	}
+}
+
+func TestSplitFramesPartialTrailing(t *testing.T) {
+	// Request + first 2 bytes of response → 1 request frame, 2-byte remainder
+	partial := make([]byte, 0, len(reqFrame)+2)
+	partial = append(partial, reqFrame...)
+	partial = append(partial, respFrame[:2]...)
+
+	frames, remainder := SplitFramesPartial(partial)
+	if len(frames) != 1 {
+		t.Fatalf("got %d frames, want 1", len(frames))
+	}
+	if !bytes.Equal(frames[0].Data, reqFrame) {
+		t.Errorf("frame[0] = %x, want %x", frames[0].Data, reqFrame)
+	}
+	if frames[0].Dir != DirRequest {
+		t.Errorf("frame[0].Dir = %d, want DirRequest", frames[0].Dir)
+	}
+	if !bytes.Equal(remainder, respFrame[:2]) {
+		t.Errorf("remainder = %x, want %x", remainder, respFrame[:2])
+	}
+}
+
+func TestSplitFramesPartialOnly(t *testing.T) {
+	// Just a partial frame → 0 frames, entire input as remainder
+	partial := respFrame[:3]
+	frames, remainder := SplitFramesPartial(partial)
+	if len(frames) != 0 {
+		t.Fatalf("got %d frames, want 0", len(frames))
+	}
+	if !bytes.Equal(remainder, partial) {
+		t.Errorf("remainder = %x, want %x", remainder, partial)
+	}
+}
+
+func TestSplitFramesPartialReassembly(t *testing.T) {
+	// Simulate remainder from previous cycle + rest of frame
+	// Split response at byte 2: first 2 bytes are "remainder", rest arrives next
+	remainderBytes := respFrame[:2]
+	nextBuf := respFrame[2:]
+	combined := make([]byte, 0, len(remainderBytes)+len(nextBuf))
+	combined = append(combined, remainderBytes...)
+	combined = append(combined, nextBuf...)
+
+	frames, remainder := SplitFramesPartial(combined)
+	if len(frames) != 1 {
+		t.Fatalf("got %d frames, want 1", len(frames))
+	}
+	if !bytes.Equal(frames[0].Data, respFrame) {
+		t.Errorf("frame[0] = %x, want %x", frames[0].Data, respFrame)
+	}
+	if frames[0].Dir != DirResponse {
+		t.Errorf("frame[0].Dir = %d, want DirResponse", frames[0].Dir)
+	}
+	if remainder != nil {
+		t.Errorf("remainder = %x, want nil", remainder)
+	}
+}
+
+func TestSplitFramesPartialEmpty(t *testing.T) {
+	frames, remainder := SplitFramesPartial([]byte{})
+	if len(frames) != 0 {
+		t.Fatalf("got %d frames, want 0", len(frames))
+	}
+	if remainder != nil {
+		t.Errorf("remainder = %x, want nil", remainder)
+	}
+}
+
+func TestSplitFramesPartialValidThenGarbage(t *testing.T) {
+	// Valid request followed by unrecognized bytes → 1 frame, garbage as remainder
+	garbage := []byte{0xFF, 0xFE}
+	input := make([]byte, 0, len(reqFrame)+len(garbage))
+	input = append(input, reqFrame...)
+	input = append(input, garbage...)
+
+	frames, remainder := SplitFramesPartial(input)
+	if len(frames) != 1 {
+		t.Fatalf("got %d frames, want 1", len(frames))
+	}
+	if !bytes.Equal(frames[0].Data, reqFrame) {
+		t.Errorf("frame[0] = %x, want %x", frames[0].Data, reqFrame)
+	}
+	if frames[0].Dir != DirRequest {
+		t.Errorf("frame[0].Dir = %d, want DirRequest", frames[0].Dir)
+	}
+	if !bytes.Equal(remainder, garbage) {
+		t.Errorf("remainder = %x, want %x", remainder, garbage)
+	}
+}
+
 func TestSplitFramesMultiple(t *testing.T) {
 	// Three frames: request + response + another request
 	triple := make([]byte, 0, len(reqFrame)+len(respFrame)+len(reqFrame))
