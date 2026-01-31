@@ -11,16 +11,21 @@ const (
 	versionMajor uint16 = 2
 	versionMinor uint16 = 4
 	snapLen      uint32 = 65535
-	dltUser0     uint32 = 147
+
+	DLTUser0   uint32 = 147
+	DLTRTACSer uint32 = 250
 )
 
 // Writer writes packets in libpcap format.
 type Writer struct {
-	w io.Writer
+	w     io.Writer
+	order binary.ByteOrder
 }
 
 // NewWriter creates a Writer and writes the 24-byte pcap global header.
-func NewWriter(w io.Writer) (*Writer, error) {
+// The byte order determines the endianness of all header fields in the file.
+// The dlt parameter sets the link-layer header type (e.g. DLTUser0, DLTRTACSer).
+func NewWriter(w io.Writer, order binary.ByteOrder, dlt uint32) (*Writer, error) {
 	hdr := struct {
 		Magic        uint32
 		VersionMajor uint16
@@ -34,12 +39,12 @@ func NewWriter(w io.Writer) (*Writer, error) {
 		VersionMajor: versionMajor,
 		VersionMinor: versionMinor,
 		SnapLen:      snapLen,
-		LinkType:     dltUser0,
+		LinkType:     dlt,
 	}
-	if err := binary.Write(w, binary.LittleEndian, &hdr); err != nil {
+	if err := binary.Write(w, order, &hdr); err != nil {
 		return nil, err
 	}
-	return &Writer{w: w}, nil
+	return &Writer{w: w, order: order}, nil
 }
 
 // WritePacket writes a single packet with its timestamp and raw data.
@@ -56,7 +61,7 @@ func (pw *Writer) WritePacket(ts time.Time, data []byte) error {
 		CapLen:  length,
 		OrigLen: length,
 	}
-	if err := binary.Write(pw.w, binary.LittleEndian, &hdr); err != nil {
+	if err := binary.Write(pw.w, pw.order, &hdr); err != nil {
 		return err
 	}
 	_, err := pw.w.Write(data)

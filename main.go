@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 
 	"go.bug.st/serial"
 
+	"mbpcap/pkg/decoder"
 	"mbpcap/pkg/pcap"
 )
 
@@ -49,13 +51,43 @@ func parseStopBits(n int) (serial.StopBits, error) {
 	}
 }
 
+// charBits returns the total number of bits per character on the wire
+// (start + data + optional parity + stop).
+func charBits(databits, stopbitsN int, parity string) int {
+	bits := 1 + databits // start + data
+	if parity != "none" {
+		bits++
+	}
+	bits += stopbitsN
+	return bits
+}
+
+// defaultSilence returns 3.5 character times for the given serial settings.
+func defaultSilence(baud, databits, stopbitsN int, parity string) time.Duration {
+	bits := charBits(databits, stopbitsN, parity)
+	charTime := float64(bits) / float64(baud)
+	return time.Duration(3.5 * charTime * float64(time.Second))
+}
+
+// rtacHeader builds a 12-byte RTAC Serial header (big-endian) for the given
+// timestamp and event type.
+func rtacHeader(ts time.Time, eventType byte) []byte {
+	hdr := make([]byte, 12)
+	binary.BigEndian.PutUint32(hdr[0:4], uint32(ts.Unix()))
+	binary.BigEndian.PutUint32(hdr[4:8], uint32(ts.Nanosecond()/1000))
+	hdr[8] = eventType
+	return hdr
+}
+
 func main() {
 	baud := flag.Int("baud", 115200, "baud rate")
 	databits := flag.Int("databits", 8, "data bits (5-8)")
 	parityStr := flag.String("parity", "none", "parity: none, odd, even, mark, space")
 	stopbitsInt := flag.Int("stopbits", 1, "stop bits: 1 or 2")
 	output := flag.String("o", "", "output PCAP file path (required)")
-	silenceMs := flag.Int("silence", 20, "silence threshold in milliseconds")
+	silenceUs := flag.Float64("silence", 0, "silence threshold in microseconds (0 = auto: 3.5 character times)")
+	bigEndian := flag.Bool("bigendian", false, "write PCAP in big-endian byte order")
+	modbusMode := flag.Bool("modbus", false, "enable Modbus RTU frame splitting")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mbpcap [flags] <serial-port>\n\nFlags:\n")
@@ -102,12 +134,27 @@ func main() {
 	}
 	defer f.Close()
 
-	pw, err := pcap.NewWriter(f)
+	var byteOrder binary.ByteOrder = binary.LittleEndian
+	if *bigEndian {
+		byteOrder = binary.BigEndian
+	}
+
+	dlt := pcap.DLTUser0
+	if *modbusMode {
+		dlt = pcap.DLTRTACSer
+	}
+
+	pw, err := pcap.NewWriter(f, byteOrder, dlt)
 	if err != nil {
 		log.Fatalf("write pcap header: %v", err)
 	}
 
-	silenceThreshold := time.Duration(*silenceMs) * time.Millisecond
+	var silenceThreshold time.Duration
+	if *silenceUs > 0 {
+		silenceThreshold = time.Duration(*silenceUs * float64(time.Microsecond))
+	} else {
+		silenceThreshold = defaultSilence(*baud, *databits, *stopbitsInt, *parityStr)
+	}
 
 	dataChan := make(chan readResult, 64)
 	errChan := make(chan error, 1)
@@ -146,15 +193,39 @@ func main() {
 		if len(packetBuf) == 0 {
 			return
 		}
-		if err := pw.WritePacket(firstByteTime, packetBuf); err != nil {
-			log.Printf("write packet: %v", err)
+		if *modbusMode {
+			classified := decoder.SplitFrames(packetBuf)
+			for i, frame := range classified {
+				ts := firstByteTime
+				if i > 0 {
+					bytesSoFar := 0
+					for j := 0; j < i; j++ {
+						bytesSoFar += len(classified[j].Data)
+					}
+					wireTime := time.Duration(float64(bytesSoFar*charBits(*databits, *stopbitsInt, *parityStr)) / float64(*baud) * float64(time.Second))
+					ts = firstByteTime.Add(wireTime)
+				}
+				payload := append(rtacHeader(ts, byte(frame.Dir)), frame.Data...)
+				if err := pw.WritePacket(ts, payload); err != nil {
+					log.Printf("write packet: %v", err)
+				}
+				packetCount++
+			}
+		} else {
+			if err := pw.WritePacket(firstByteTime, packetBuf); err != nil {
+				log.Printf("write packet: %v", err)
+			}
+			packetCount++
 		}
-		packetCount++
 		packetBuf = nil
 	}
 
-	log.Printf("capturing on %s (%d baud) → %s (silence threshold: %dms)",
-		portPath, *baud, *output, *silenceMs)
+	modeStr := ""
+	if *modbusMode {
+		modeStr = " (modbus splitting)"
+	}
+	log.Printf("capturing on %s (%d baud) → %s (silence threshold: %s)%s",
+		portPath, *baud, *output, silenceThreshold, modeStr)
 
 	for {
 		select {

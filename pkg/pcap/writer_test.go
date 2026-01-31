@@ -9,7 +9,7 @@ import (
 
 func TestGlobalHeader(t *testing.T) {
 	var buf bytes.Buffer
-	_, err := NewWriter(&buf)
+	_, err := NewWriter(&buf, binary.LittleEndian, DLTUser0)
 	if err != nil {
 		t.Fatalf("NewWriter: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestGlobalHeader(t *testing.T) {
 
 func TestWritePacket(t *testing.T) {
 	var buf bytes.Buffer
-	w, err := NewWriter(&buf)
+	w, err := NewWriter(&buf, binary.LittleEndian, DLTUser0)
 	if err != nil {
 		t.Fatalf("NewWriter: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestWritePacket(t *testing.T) {
 
 func TestMultiplePackets(t *testing.T) {
 	var buf bytes.Buffer
-	w, err := NewWriter(&buf)
+	w, err := NewWriter(&buf, binary.LittleEndian, DLTUser0)
 	if err != nil {
 		t.Fatalf("NewWriter: %v", err)
 	}
