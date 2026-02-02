@@ -70,6 +70,14 @@ func defaultSilence(baud, databits, stopbitsN int, parity string) time.Duration 
 	return time.Duration(3.5 * charTime * float64(time.Second))
 }
 
+// modbusSilence returns the wire time for a max-length Modbus RTU frame
+// (256 bytes) plus a fixed 25ms margin for USB serial adapter jitter.
+func modbusSilence(baud, databits, stopbitsN int, parity string) time.Duration {
+	bits := charBits(databits, stopbitsN, parity)
+	wireTime := float64(256*bits) / float64(baud)
+	return time.Duration(wireTime*float64(time.Second)) + 25*time.Millisecond
+}
+
 // rtacHeader builds a 12-byte RTAC Serial header (big-endian) for the given
 // timestamp and event type.
 func rtacHeader(ts time.Time, eventType byte) []byte {
@@ -171,9 +179,12 @@ func main() {
 	}
 
 	var silenceThreshold time.Duration
-	if *silenceUs > 0 {
+	switch {
+	case *silenceUs > 0:
 		silenceThreshold = time.Duration(*silenceUs * float64(time.Microsecond))
-	} else {
+	case *modbusMode:
+		silenceThreshold = modbusSilence(*baud, *databits, *stopbitsInt, *parityStr)
+	default:
 		silenceThreshold = defaultSilence(*baud, *databits, *stopbitsInt, *parityStr)
 	}
 
