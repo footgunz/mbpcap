@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.bug.st/serial"
+	"golang.org/x/term"
 
 	"mbpcap/pkg/decoder"
 	"mbpcap/pkg/pcap"
@@ -97,7 +98,7 @@ func main() {
 	silenceUs := flag.Float64("silence", 0, "silence threshold in microseconds (0 = auto: 3.5 character times)")
 	bigEndian := flag.Bool("bigendian", false, "write PCAP in big-endian byte order")
 	modbusMode := flag.Bool("modbus", false, "enable Modbus RTU frame splitting")
-	verbose := flag.Bool("v", false, "verbose: show live capture status on stderr")
+	quiet := flag.Bool("q", false, "quiet: suppress live capture status")
 	pipeMode := flag.Bool("pipe", false, "create a named pipe (FIFO) for live Wireshark streaming (Unix only)")
 
 	flag.Usage = func() {
@@ -111,6 +112,8 @@ func main() {
 		os.Exit(1)
 	}
 	portPath := flag.Arg(0)
+	showStatus := !*quiet && term.IsTerminal(int(os.Stderr.Fd()))
+	enableTerminalStatus()
 
 	if *output == "" {
 		fmt.Fprintln(os.Stderr, "error: -o (output file) is required")
@@ -242,7 +245,7 @@ func main() {
 			// remainder and this buffer exceeds the silence threshold,
 			// the remainder is too old to belong to the current frame.
 			if extra != nil && firstByteTime.Sub(extraTime) > silenceThreshold {
-				if *verbose {
+				if showStatus {
 					log.Printf("expiring %d-byte remainder (age %s > silence %s)",
 						len(extra), firstByteTime.Sub(extraTime), silenceThreshold)
 				}
@@ -262,7 +265,7 @@ func main() {
 				combined = append(combined, packetBuf...)
 				frames, remainder = decoder.SplitFramesPartial(combined)
 				baseTime = extraTime
-			} else if extra != nil && *verbose {
+			} else if extra != nil && showStatus {
 				log.Printf("discarding %d-byte remainder from previous cycle", len(extra))
 			}
 
@@ -363,7 +366,7 @@ func main() {
 				log.Printf("captured %d packets", packetCount)
 				return
 			}
-			if *verbose && time.Since(lastStatus) >= time.Second {
+			if showStatus && time.Since(lastStatus) >= time.Second {
 				if *modbusMode {
 					fmt.Fprintf(os.Stderr, "\rpackets: %d (TX: %d  RX: %d  ?: %d)          ", packetCount, txCount, rxCount, unknownCount)
 				} else {
@@ -374,7 +377,7 @@ func main() {
 
 		case <-sigChan:
 			flush()
-			if *verbose {
+			if showStatus {
 				fmt.Fprintln(os.Stderr)
 			}
 			log.Printf("captured %d packets", packetCount)
@@ -382,7 +385,7 @@ func main() {
 
 		case err := <-errChan:
 			flush()
-			if *verbose {
+			if showStatus {
 				fmt.Fprintln(os.Stderr)
 			}
 			log.Printf("serial read error: %v", err)
